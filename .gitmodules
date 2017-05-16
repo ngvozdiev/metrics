@@ -1,0 +1,12 @@
+[submodule "external/ncode_common"]
+	path = external/ncode_common
+	url = https://github.com/ngvozdiev/ncode-common.git
+[submodule "external/googletest"]
+	path = external/googletest
+	url = https://github.com/google/googletest
+[submodule "external/ncode_web"]
+	path = external/ncode_web
+	url = https://github.com/ngvozdiev/ncode-web.git
+[submodule "external/ncode_net"]
+	path = external/ncode_net
+	url = https://github.com/ngvozdiev/ncode-net.git
