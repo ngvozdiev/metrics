@@ -43,8 +43,7 @@ matrix:
       env: COMPILER=clang++-3.7
 
 before_install:
-  - sudo apt-get update -qq
-  - sudo apt-get install -y protobuf-compiler libprotobuf-dev
+  - ./install_protobuf.sh
 
 script:
   - mkdir build
