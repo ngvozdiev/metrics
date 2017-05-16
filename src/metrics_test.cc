@@ -5,6 +5,7 @@
 #include <vector>
 #include <thread>
 #include "metrics_test_util.h"
+#include "metrics_parser.h"
 
 #include "gtest/gtest.h"
 #include "ncode_common/src/substitute.h"
@@ -107,7 +108,7 @@ static void ProcessEntriesFromFile(
     const std::string& file, std::function<void(const PBMetricEntry&)> f) {
   using namespace google::protobuf;
 
-  InputStream input_stream(file);
+  parser::InputStream input_stream(file);
   uint32_t manifest_index;
   PBMetricEntry entry;
   while (true) {
@@ -273,9 +274,9 @@ TEST_F(MetricFixture, MultiThreadGetHandle) {
   t1.join();
   t2.join();
 
-  ASSERT_EQ(1000000, ptr_storage[0].size());
-  ASSERT_EQ(1000000, ptr_storage[1].size());
-  for (size_t i = 0; i < 1000000; ++i) {
+  ASSERT_EQ(1000000ul, ptr_storage[0].size());
+  ASSERT_EQ(1000000ul, ptr_storage[1].size());
+  for (size_t i = 0; i < 1000000ul; ++i) {
     ASSERT_EQ(ptr_storage[0][i], ptr_storage[1][i]);
   }
 }
@@ -309,8 +310,8 @@ TEST_F(SingleFilePerMetricFixture, PerMetricFileOutput) {
     entries_two.emplace_back(entry);
   });
 
-  ASSERT_EQ(2, entries_one.size());
-  ASSERT_EQ(2, entries_two.size());
+  ASSERT_EQ(2ul, entries_one.size());
+  ASSERT_EQ(2ul, entries_two.size());
   ASSERT_EQ(20.0, entries_two.back().double_value());
   ASSERT_EQ(10.0, entries_one.back().double_value());
 }

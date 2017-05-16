@@ -1,15 +1,22 @@
 #include "metrics_parser.h"
 
+#include <fcntl.h>
+#include <google/protobuf/io/coded_stream.h>
+#include <google/protobuf/io/zero_copy_stream_impl.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <algorithm>
 #include <cassert>
+#include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <iomanip>
 #include <limits>
+#include <sstream>
 
 #include "ncode_common/src/strutil.h"
 #include "ncode_common/src/substitute.h"
-#include "ncode_web/src/web_page.h"
 
 namespace nc {
 namespace metrics {
@@ -21,8 +28,8 @@ constexpr char FieldsMatcher::kGtMatcher[];
 constexpr char FieldsMatcher::kStringMatcher[];
 
 constexpr size_t kNumericFieldWidth = 10;
-constexpr size_t kLongTextWidth = 50;
-constexpr size_t kShortTextWidth = 25;
+constexpr size_t kLongTextWidth = 100;
+constexpr size_t kShortTextWidth = 40;
 
 static std::string SingleFieldToString(const PBMetricField& field) {
   switch (field.type()) {
@@ -57,6 +64,109 @@ std::string GetFieldString(const PBManifestEntry& entry) {
   }
 
   return out;
+}
+
+template <>
+void ParseEntryFromProtobuf<uint64_t>(const PBMetricEntry& entry,
+                                      Entry<uint64_t>* out) {
+  out->timestamp = entry.timestamp();
+  out->value = entry.uint64_value();
+}
+
+template <>
+void ParseEntryFromProtobuf<uint32_t>(const PBMetricEntry& entry,
+                                      Entry<uint32_t>* out) {
+  out->timestamp = entry.timestamp();
+  out->value = entry.uint32_value();
+}
+
+template <>
+void ParseEntryFromProtobuf<bool>(const PBMetricEntry& entry,
+                                  Entry<bool>* out) {
+  out->timestamp = entry.timestamp();
+  out->value = entry.bool_value();
+}
+
+template <>
+void ParseEntryFromProtobuf<double>(const PBMetricEntry& entry,
+                                    Entry<double>* out) {
+  out->timestamp = entry.timestamp();
+  out->value = entry.double_value();
+}
+
+template <>
+void ParseEntryFromProtobuf<std::string>(const PBMetricEntry& entry,
+                                         Entry<std::string>* out) {
+  out->timestamp = entry.timestamp();
+  out->value = entry.string_value();
+}
+
+template <>
+void ParseEntryFromProtobuf<BytesBlob>(const PBMetricEntry& entry,
+                                       Entry<BytesBlob>* out) {
+  out->timestamp = entry.timestamp();
+  out->value = entry.bytes_value();
+}
+
+InputStream::InputStream(const std::string& file) {
+  fd_ = open(file.c_str(), O_RDONLY);
+  CHECK(fd_ > 0) << "Bad input file " << file << ": " << strerror(errno);
+  file_input_ = make_unique<google::protobuf::io::FileInputStream>(fd_);
+  input_ =
+      make_unique<google::protobuf::io::CodedInputStream>(file_input_.get());
+  input_->SetTotalBytesLimit(std::numeric_limits<int>::max(),
+                             std::numeric_limits<int>::max());
+}
+
+InputStream::~InputStream() {
+  // close streams
+  input_.reset();
+  file_input_->Close();
+  file_input_.reset();
+  close(fd_);
+}
+
+bool InputStream::ReadDelimitedHeaderFrom(uint32_t* manifest_index) {
+  // Read the manifest.
+  if (!input_->ReadVarint32(manifest_index)) {
+    return false;
+  }
+  return true;
+}
+
+bool InputStream::SkipMessage() {
+  // Read the size.
+  uint32_t size;
+  if (!input_->ReadVarint32(&size)) {
+    return false;
+  }
+
+  return input_->Skip(size);
+}
+
+bool InputStream::ReadDelimitedFrom(PBMetricEntry* message) {
+  // Read the size.
+  uint32_t size;
+  if (!input_->ReadVarint32(&size)) {
+    return false;
+  }
+
+  // Tell the stream not to read beyond that size.
+  google::protobuf::io::CodedInputStream::Limit limit = input_->PushLimit(size);
+
+  // Parse the message.
+  if (!message->MergeFromCodedStream(input_.get())) {
+    return false;
+  }
+
+  if (!input_->ConsumedEntireMessage()) {
+    return false;
+  }
+
+  // Release the limit.
+  input_->PopLimit(limit);
+
+  return true;
 }
 
 std::unique_ptr<SingleFieldMatcher> SingleFieldMatcher::FromString(
@@ -420,50 +530,6 @@ std::string Manifest::FullToString() const {
   return ss.str();
 }
 
-web::HtmlTable Manifest::FullToTable(
-    const std::string& table_id,
-    std::function<std::string(const std::string&)> link_gen) const {
-  web::HtmlTable table(table_id,
-                       {kMetricIdColumnName, kTypeColumnName, kFieldsColumnName,
-                        kSetsCountColumnName, kValuesCountColumnName});
-
-  for (const auto& id_and_manifest_entries : entries_) {
-    const std::string& id = id_and_manifest_entries.first;
-    const std::vector<WrappedEntry>& entries = id_and_manifest_entries.second;
-
-    size_t total_values = 0;
-    for (const WrappedEntry& entry : entries) {
-      total_values += entry.num_entries();
-    }
-
-    // Entries with the same id will have the same fields. The values of those
-    // fields will be different.
-    const WrappedEntry& first_entry = entries.front();
-    const std::string& type_name =
-        PBManifestEntry_Type_Name(first_entry.manifest_entry().type());
-
-    std::vector<std::string> fields_strings;
-    for (const PBMetricField& field : first_entry.manifest_entry().fields()) {
-      fields_strings.emplace_back(StrCat(PBMetricField::Type_Name(field.type()),
-                                         "(", field.description(), ")"));
-    }
-    if (fields_strings.empty()) {
-      fields_strings.emplace_back(kNoFields);
-    }
-
-    std::string id_in_table = id;
-    if (link_gen) {
-      id_in_table = link_gen(id);
-    }
-
-    table.AddRow({id_in_table, type_name, Join(fields_strings, ","),
-                  std::to_string(entries.size()),
-                  std::to_string(total_values)});
-  }
-
-  return table;
-}
-
 static std::string GetFieldsString(
     const google::protobuf::RepeatedPtrField<PBMetricField>& fields) {
   std::vector<std::string> fields_strings;
@@ -497,52 +563,6 @@ std::string Manifest::ToString(const std::string& metric_id) const {
   }
 
   return ss.str();
-}
-
-web::HtmlTable Manifest::ToTable(const std::string& metric_id,
-                                 const std::string& table_id) const {
-  const std::vector<WrappedEntry>& metric_entries =
-      FindOrDie(entries_, metric_id);
-
-  CHECK(!metric_entries.empty());
-  const PBManifestEntry& first_entry = metric_entries.front().manifest_entry();
-
-  std::vector<std::string> fields_strings = {"Index"};
-  for (const PBMetricField& field : first_entry.fields()) {
-    fields_strings.emplace_back(field.description());
-  }
-  if (fields_strings.empty()) {
-    fields_strings.emplace_back("NO FIELDS");
-  }
-  fields_strings.emplace_back("Entries");
-
-  bool numeric = IsNumeric(metric_entries.front());
-  if (numeric) {
-    fields_strings.emplace_back("Non-zero entries");
-    fields_strings.emplace_back("Sum of entries");
-  }
-
-  web::HtmlTable table(table_id, fields_strings);
-  for (const WrappedEntry& wrapped_entry : metric_entries) {
-    std::vector<std::string> fields_as_strings;
-    fields_as_strings.emplace_back(
-        std::to_string(wrapped_entry.manifest_index()));
-
-    for (const PBMetricField& field : wrapped_entry.manifest_entry().fields()) {
-      fields_as_strings.emplace_back(SingleFieldToString(field));
-    }
-    fields_as_strings.emplace_back(std::to_string(wrapped_entry.num_entries()));
-
-    if (numeric) {
-      fields_as_strings.emplace_back(
-          std::to_string(wrapped_entry.num_non_zero_entries()));
-      fields_as_strings.emplace_back(std::to_string(wrapped_entry.sum()));
-    }
-
-    table.AddRow(fields_as_strings);
-  }
-
-  return table;
 }
 
 uint64_t Manifest::TotalEntryCount() const {

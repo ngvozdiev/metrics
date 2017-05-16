@@ -19,6 +19,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <mutex>
 
 #include "metrics.pb.h"
 #include "ncode_common/src/circular_array.h"
@@ -62,34 +63,6 @@ class OutputStream {
   DISALLOW_COPY_AND_ASSIGN(OutputStream);
 };
 
-class InputStream {
- public:
-  InputStream(const std::string& file);
-
-  ~InputStream();
-
-  // Reads the header from a stream. This is usually followed by
-  // ReadDelimitedFrom if the client thinks the manifest index is interesting or
-  // calling SkipMessage and calling again if it's not.
-  bool ReadDelimitedHeaderFrom(uint32_t* manifest_index);
-
-  // If called after ReadDelimitedHeaderFrom will skip to the next message.
-  bool SkipMessage();
-
-  // Reads a protobuf from a stream. Should be called after
-  // ReadDelimitedHeaderFrom.
-  bool ReadDelimitedFrom(PBMetricEntry* message);
-
- private:
-  // File descriptor. Closed on destruction.
-  int fd_;
-
-  // File input stream. Owned by this object.
-  std::unique_ptr<google::protobuf::io::FileInputStream> file_input_;
-
-  DISALLOW_COPY_AND_ASSIGN(InputStream);
-};
-
 template <typename T>
 struct Entry {
   T value;             // The actual value.
@@ -101,36 +74,6 @@ struct Entry {
 
   bool operator!=(const Entry& rhs) const { return !operator==(rhs); }
 };
-
-template <typename T>
-void ParseEntryFromProtobuf(const PBMetricEntry& entry, Entry<T>* out) {
-  Unused(entry);
-  Unused(out);
-  assert(false);
-}
-
-template <>
-void ParseEntryFromProtobuf<uint64_t>(const PBMetricEntry& entry,
-                                      Entry<uint64_t>* out);
-
-template <>
-void ParseEntryFromProtobuf<uint32_t>(const PBMetricEntry& entry,
-                                      Entry<uint32_t>* out);
-
-template <>
-void ParseEntryFromProtobuf<bool>(const PBMetricEntry& entry, Entry<bool>* out);
-
-template <>
-void ParseEntryFromProtobuf<double>(const PBMetricEntry& entry,
-                                    Entry<double>* out);
-
-template <>
-void ParseEntryFromProtobuf<std::string>(const PBMetricEntry& entry,
-                                         Entry<std::string>* out);
-
-template <>
-void ParseEntryFromProtobuf<BytesBlob>(const PBMetricEntry& entry,
-                                       Entry<BytesBlob>* out);
 
 template <typename T>
 void SaveEntryToProtobuf(const Entry<T>& entry, PBMetricEntry* out) {

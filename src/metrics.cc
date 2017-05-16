@@ -25,48 +25,6 @@ namespace nc {
 namespace metrics {
 
 template <>
-void ParseEntryFromProtobuf<uint64_t>(const PBMetricEntry& entry,
-                                      Entry<uint64_t>* out) {
-  out->timestamp = entry.timestamp();
-  out->value = entry.uint64_value();
-}
-
-template <>
-void ParseEntryFromProtobuf<uint32_t>(const PBMetricEntry& entry,
-                                      Entry<uint32_t>* out) {
-  out->timestamp = entry.timestamp();
-  out->value = entry.uint32_value();
-}
-
-template <>
-void ParseEntryFromProtobuf<bool>(const PBMetricEntry& entry,
-                                  Entry<bool>* out) {
-  out->timestamp = entry.timestamp();
-  out->value = entry.bool_value();
-}
-
-template <>
-void ParseEntryFromProtobuf<double>(const PBMetricEntry& entry,
-                                    Entry<double>* out) {
-  out->timestamp = entry.timestamp();
-  out->value = entry.double_value();
-}
-
-template <>
-void ParseEntryFromProtobuf<std::string>(const PBMetricEntry& entry,
-                                         Entry<std::string>* out) {
-  out->timestamp = entry.timestamp();
-  out->value = entry.string_value();
-}
-
-template <>
-void ParseEntryFromProtobuf<BytesBlob>(const PBMetricEntry& entry,
-                                       Entry<BytesBlob>* out) {
-  out->timestamp = entry.timestamp();
-  out->value = entry.bytes_value();
-}
-
-template <>
 void SaveEntryToProtobuf<uint64_t>(const Entry<uint64_t>& entry,
                                    PBMetricEntry* out) {
   out->set_timestamp(entry.timestamp);
@@ -157,69 +115,6 @@ bool OutputStream::WriteDelimitedTo(const PBMetricEntry& entry,
       return false;
     }
   }
-
-  return true;
-}
-
-InputStream::InputStream(const std::string& file) {
-  fd_ = open(file.c_str(), O_RDONLY);
-  CHECK(fd_ > 0) << "Bad input file " << file << ": " << strerror(errno);
-  file_input_ = make_unique<google::protobuf::io::FileInputStream>(fd_);
-}
-
-InputStream::~InputStream() {
-  // close streams
-  file_input_->Close();
-  file_input_.reset();
-  close(fd_);
-}
-
-bool InputStream::ReadDelimitedHeaderFrom(uint32_t* manifest_index) {
-  google::protobuf::io::CodedInputStream input(file_input_.get());
-
-  // Read the manifest.
-  if (!input.ReadVarint32(manifest_index)) {
-    return false;
-  }
-  return true;
-}
-
-bool InputStream::SkipMessage() {
-  google::protobuf::io::CodedInputStream input(file_input_.get());
-
-  // Read the size.
-  uint32_t size;
-  if (!input.ReadVarint32(&size)) {
-    return false;
-  }
-
-  return input.Skip(size);
-}
-
-bool InputStream::ReadDelimitedFrom(PBMetricEntry* message) {
-  // We create a new coded stream for each message.
-  google::protobuf::io::CodedInputStream input(file_input_.get());
-
-  // Read the size.
-  uint32_t size;
-  if (!input.ReadVarint32(&size)) {
-    return false;
-  }
-
-  // Tell the stream not to read beyond that size.
-  google::protobuf::io::CodedInputStream::Limit limit = input.PushLimit(size);
-
-  // Parse the message.
-  if (!message->MergeFromCodedStream(&input)) {
-    return false;
-  }
-
-  if (!input.ConsumedEntireMessage()) {
-    return false;
-  }
-
-  // Release the limit.
-  input.PopLimit(limit);
 
   return true;
 }
